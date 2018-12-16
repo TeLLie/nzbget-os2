@@ -813,7 +813,7 @@ bool RemoteClient::RequestServerEditQueue(DownloadQueue::EEditAction action, int
 		for (CString& name : nameList)
 		{
 			int len = strlen(name);
-			strncpy(names, name, len + 1);
+			strcpy(names, name);
 			names += len + 1;
 		}
 	}
