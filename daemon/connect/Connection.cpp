@@ -31,6 +31,10 @@ std::unique_ptr<Mutex> Connection::m_getHostByNameMutex;
 #endif
 #endif
 
+#ifdef __OS2__
+#define SHUT_WR 1
+#endif 
+
 #if defined(__linux__) && !defined(__ANDROID__)
 // Activate DNS resolving workaround for Android:
 //  - this is only necessary in general Linux build if we want it to run on Android.
