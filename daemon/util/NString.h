@@ -100,7 +100,9 @@ Wide-character string.
 class WString
 {
 public:
+#ifndef __OS2__
 	WString(wchar_t* wstr) : m_data(wcsdup(wstr)) {}
+#endif
 	WString(const char* utfstr);
 	~WString() { free(m_data); }
 	WString(WString&& other) noexcept { m_data = other.m_data; other.m_data = nullptr; }
