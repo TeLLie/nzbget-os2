@@ -24,6 +24,10 @@
 #include "Log.h"
 #include "FileSystem.h"
 
+#ifdef __INNOTEK_LIBC__ //os2
+#include <libcx/net.h>
+#endif
+
 static const int CONNECTION_READBUFFER_SIZE = 1024;
 #ifndef HAVE_GETADDRINFO
 #ifndef HAVE_GETHOSTBYNAME_R
