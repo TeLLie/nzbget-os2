@@ -18,6 +18,7 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+
 #include <string.h> //Fix for strnlen OS2
 #include "nzbget.h"
 #include "RemoteClient.h"
@@ -812,10 +813,12 @@ bool RemoteClient::RequestServerEditQueue(DownloadQueue::EEditAction action, int
 		char *names = trailingData + textLen + idLength;
 		for (CString& name : nameList)
 		{
+#ifdef __USE_GNU
 			// "len" must be less or equal than: "buffer size" - "already used buffer" - "ending \0"
 			size_t len = strnlen(name, length - (names - trailingData) - 1);
 			strncpy(names, name, len + 1);
 			names += len + 1;
+#endif
 		}
 	}
 
