@@ -18,7 +18,7 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-
+#include <string.h> //Fix for strnlen OS2
 #include "nzbget.h"
 #include "RemoteClient.h"
 #include "DownloadInfo.h"
