@@ -111,7 +111,8 @@ void Thread::Start()
 	pthread_attr_t m_attr;
 	pthread_attr_init(&m_attr);
 	pthread_attr_setdetachstate(&m_attr, PTHREAD_CREATE_DETACHED);
-	pthread_attr_setinheritsched(&m_attr, PTHREAD_INHERIT_SCHED);
+//	pthread_attr_setinheritsched(&m_attr, PTHREAD_INHERIT_SCHED);
+  pthread_attr_setstacksize(&m_attr, PTHREAD_INHERIT_SCHED); //OS2 fix
 	m_running = !pthread_create(&m_threadObj, &m_attr, Thread::thread_handler, (void *) this);
 	pthread_attr_destroy(&m_attr);
 #endif
