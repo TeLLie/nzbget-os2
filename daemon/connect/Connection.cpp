@@ -1129,8 +1129,10 @@ const char* Connection::GetRemoteAddr()
 		}
 #else
 		inet_ntop(((sockaddr_in*)&peerName)->sin_family,
+#ifdef INET6
 			((sockaddr_in*)&peerName)->sin_family == AF_INET6 ?
 			(void*)&((sockaddr_in6*)&peerName)->sin6_addr :
+#endif
 			(void*)&((sockaddr_in*)&peerName)->sin_addr,
 			m_remoteAddr, m_remoteAddr.Capacity());
 #endif
