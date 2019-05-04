@@ -92,7 +92,7 @@ bool Thread::Kill()
 	bool terminated = TerminateThread(m_threadObj, 0) != 0;
 #else
 #ifdef HAVE_PTHREAD_CANCEL
-	bool terminated = pthread_cancel(m_threadObj) == 0;
+    bool terminated = pthread_cancel((pthread_t)m_threadObj) == 0; //OS2-fix
 #else
 	bool terminated = false;
 	warn("Could not kill thread: thread cancelling isn't supported on this platform");
