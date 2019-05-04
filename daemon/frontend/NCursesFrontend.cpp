@@ -2,7 +2,7 @@
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
  *  Copyright (C) 2004 Sven Henkel <sidddy@users.sourceforge.net>
- *  Copyright (C) 2007-2016 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2007-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -213,8 +213,10 @@ void NCursesFrontend::Run()
 			m_dataUpdatePos = m_updateInterval;
 		}
 
-		usleep(10 * 1000);
-		m_dataUpdatePos -= 10;
+		// update more often (sleep shorter) if need faster reaction on user input
+		int sleepInterval = m_inputMode == normal ? 100 : 10;
+		Wait(sleepInterval);
+		m_dataUpdatePos -= sleepInterval;
 	}
 
 	FreeData();

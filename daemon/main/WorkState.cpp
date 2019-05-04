@@ -1,7 +1,7 @@
 /*
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
- *  Copyright (C) 2015-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -18,28 +18,10 @@
  */
 
 
-#ifndef DISKSERVICE_H
-#define DISKSERVICE_H
+#include "nzbget.h"
+#include "WorkState.h"
 
-#include "Service.h"
-#include "Observer.h"
-
-class DiskService : public Service, public Observer
+void WorkState::Changed()
 {
-public:
-	DiskService();
-
-protected:
-	virtual int ServiceInterval();
-	virtual void ServiceWork();
-	virtual void Update(Subject* caller, void* aspect);
-
-private:
-	bool m_waitingRequiredDir = true;
-	bool m_waitingReported = false;
-
-	void CheckDiskSpace();
-	void CheckRequiredDir();
-};
-
-#endif
+	Notify(nullptr);
+}

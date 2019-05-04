@@ -1,7 +1,7 @@
 /*
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
- *  Copyright (C) 2015-2016 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2015-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -21,23 +21,39 @@
 #include "nzbget.h"
 #include "DiskService.h"
 #include "Options.h"
+#include "WorkState.h"
 #include "StatMeter.h"
 #include "Log.h"
 #include "Util.h"
 #include "FileSystem.h"
 
+DiskService::DiskService()
+{
+	g_WorkState->Attach(this);
+}
+
+void DiskService::Update(Subject* caller, void* aspect)
+{
+	WakeUp();
+}
+
+int DiskService::ServiceInterval()
+{
+	return m_waitingRequiredDir ? 1 :
+		g_Options->GetDiskSpace() <= 0 ? Service::Sleep :
+		// notifications from 'WorkState' are not 100% reliable due to race conditions
+		!g_WorkState->GetDownloading() ? 10 :
+		1;
+}
+
 void DiskService::ServiceWork()
 {
-	m_interval++;
-	if (m_interval == 5)
+	debug("Disk service work");
+
+	if (g_Options->GetDiskSpace() > 0 && g_WorkState->GetDownloading())
 	{
-		if (!g_Options->GetPauseDownload() &&
-			g_Options->GetDiskSpace() > 0 && !g_StatMeter->GetStandBy())
-		{
-			// check free disk space every 1 second
-			CheckDiskSpace();
-		}
-		m_interval = 0;
+		// check free disk space every 1 second
+		CheckDiskSpace();
 	}
 
 	if (m_waitingRequiredDir)
@@ -48,11 +64,13 @@ void DiskService::ServiceWork()
 
 void DiskService::CheckDiskSpace()
 {
+	debug("Disk service work: check disk space");
+
 	int64 freeSpace = FileSystem::FreeDiskSize(g_Options->GetDestDir());
 	if (freeSpace > -1 && freeSpace / 1024 / 1024 < g_Options->GetDiskSpace())
 	{
 		warn("Low disk space on %s. Pausing download", g_Options->GetDestDir());
-		g_Options->SetPauseDownload(true);
+		g_WorkState->SetPauseDownload(true);
 	}
 
 	if (!Util::EmptyStr(g_Options->GetInterDir()))
@@ -61,13 +79,15 @@ void DiskService::CheckDiskSpace()
 		if (freeSpace > -1 && freeSpace / 1024 / 1024 < g_Options->GetDiskSpace())
 		{
 			warn("Low disk space on %s. Pausing download", g_Options->GetInterDir());
-			g_Options->SetPauseDownload(true);
+			g_WorkState->SetPauseDownload(true);
 		}
 	}
 }
 
 void DiskService::CheckRequiredDir()
 {
+	debug("Disk service work: check required dir");
+
 	if (!Util::EmptyStr(g_Options->GetRequiredDir()))
 	{
 		bool allExist = true;
@@ -97,7 +117,7 @@ void DiskService::CheckRequiredDir()
 		info("All required directories available");
 	}
 
-	g_Options->SetTempPauseDownload(false);
-	g_Options->SetTempPausePostprocess(false);
+	g_WorkState->SetTempPauseDownload(false);
+	g_WorkState->SetTempPausePostprocess(false);
 	m_waitingRequiredDir = false;
 }

@@ -1,7 +1,7 @@
 /*
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
- *  Copyright (C) 2007-2016 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2007-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 #include "DupeCoordinator.h"
 #include "ParParser.h"
 #include "Options.h"
+#include "WorkState.h"
 #include "DiskState.h"
 #include "Log.h"
 #include "FileSystem.h"
@@ -112,6 +113,19 @@ ParChecker::EFileStatus RepairController::PostParChecker::FindFileCrc(const char
 		completedFile->GetStatus() == CompletedFile::cfPartial && segments->size() > 0 &&
 			!m_postInfo->GetNzbInfo()->GetReprocess()? ParChecker::fsPartial :
 		ParChecker::fsUnknown;
+}
+
+const char* RepairController::PostParChecker::FindFileOrigname(const char* filename)
+{
+	for (CompletedFile& completedFile : m_postInfo->GetNzbInfo()->GetCompletedFiles())
+	{
+		if (!strcasecmp(completedFile.GetFilename(), filename))
+		{
+			return completedFile.GetOrigname();
+		}
+	}
+
+	return nullptr;
 }
 
 void RepairController::PostParChecker::RequestDupeSources(DupeSourceList* dupeSourceList)
@@ -519,7 +533,7 @@ void RepairController::UpdateParCheckProgress()
 
 void RepairController::CheckPauseState(PostInfo* postInfo)
 {
-	if (g_Options->GetPausePostProcess() && !postInfo->GetNzbInfo()->GetForcePriority())
+	if (g_WorkState->GetPausePostProcess() && !postInfo->GetNzbInfo()->GetForcePriority())
 	{
 		time_t stageTime = postInfo->GetStageTime();
 		time_t startTime = postInfo->GetStartTime();
@@ -528,9 +542,9 @@ void RepairController::CheckPauseState(PostInfo* postInfo)
 		time_t waitTime = Util::CurrentTime();
 
 		// wait until Post-processor is unpaused
-		while (g_Options->GetPausePostProcess() && !postInfo->GetNzbInfo()->GetForcePriority() && !IsStopped())
+		while (g_WorkState->GetPausePostProcess() && !postInfo->GetNzbInfo()->GetForcePriority() && !IsStopped())
 		{
-			usleep(50 * 1000);
+			Util::Sleep(50);
 
 			// update time stamps
 

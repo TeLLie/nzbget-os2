@@ -2,7 +2,7 @@
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
  *  Copyright (C) 2004 Sven Henkel <sidddy@users.sourceforge.net>
- *  Copyright (C) 2007-2017 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2007-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -41,7 +41,7 @@ public:
 	virtual ~QueueCoordinator();
 	virtual void Run();
 	virtual void Stop();
-	void Update(Subject* Caller, void* Aspect);
+	void Update(Subject* caller, void* aspect);
 
 	// editing queue
 	NzbInfo* AddNzbFileToQueue(std::unique_ptr<NzbInfo> nzbInfo, NzbInfo* urlInfo, bool addFirst);
@@ -67,6 +67,7 @@ private:
 			EEditAction action, const char* args);
 		virtual void HistoryChanged() { m_historyChanged = true; }
 		virtual void Save();
+		virtual void SaveChanged();
 	private:
 		QueueCoordinator* m_owner;
 		bool m_massEdit = false;
@@ -94,6 +95,8 @@ private:
 	bool m_hasMoreJobs = true;
 	int m_downloadsLimit;
 	int m_serverConfigGeneration = 0;
+	Mutex m_waitMutex;
+	ConditionVar m_waitCond;
 
 	bool GetNextArticle(DownloadQueue* downloadQueue, FileInfo* &fileInfo, ArticleInfo* &articleInfo);
 	bool GetNextFirstArticle(NzbInfo* nzbInfo, FileInfo* &fileInfo, ArticleInfo* &articleInfo);
@@ -108,11 +111,13 @@ private:
 	void ResetHangingDownloads();
 	void AdjustDownloadsLimit();
 	void Load();
+	void SaveQueueIfChanged();
 	void SaveAllPartialState();
 	void SavePartialState(FileInfo* fileInfo);
 	void LoadPartialState(FileInfo* fileInfo);
 	void SaveAllFileState();
 	void WaitJobs();
+	void WakeUp();
 };
 
 extern QueueCoordinator* g_QueueCoordinator;

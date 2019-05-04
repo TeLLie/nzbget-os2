@@ -44,6 +44,8 @@ protected:
 private:
 	int m_queuedJobs = 0;
 	RawNzbList m_activeJobs;
+	Mutex m_waitMutex;
+	ConditionVar m_waitCond;
 
 	void CheckPostQueue();
 	void CheckRequestPar(DownloadQueue* downloadQueue);

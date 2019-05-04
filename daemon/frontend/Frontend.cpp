@@ -2,7 +2,7 @@
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
  *  Copyright (C) 2004 Sven Henkel <sidddy@users.sourceforge.net>
- *  Copyright (C) 2007-2016 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2007-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
 
 #include "nzbget.h"
 #include "Options.h"
+#include "WorkState.h"
 #include "Frontend.h"
 #include "Log.h"
 #include "Connection.h"
@@ -33,7 +34,22 @@ Frontend::Frontend()
 {
 	debug("Creating Frontend");
 
+	m_workStateObserver.m_owner = this;
+	g_WorkState->Attach(&m_workStateObserver);
+
 	m_updateInterval = g_Options->GetUpdateInterval();
+}
+
+void Frontend::Stop()
+{
+	Thread::Stop();
+
+	m_waitCond.NotifyAll();
+}
+
+void Frontend::WorkStateUpdate(Subject* caller, void* aspect)
+{
+	m_waitCond.NotifyAll();
 }
 
 bool Frontend::PrepareData()
@@ -57,8 +73,8 @@ bool Frontend::PrepareData()
 		if (m_summary)
 		{
 			m_currentDownloadSpeed = g_StatMeter->CalcCurrentDownloadSpeed();
-			m_pauseDownload = g_Options->GetPauseDownload();
-			m_downloadLimit = g_Options->GetDownloadRate();
+			m_pauseDownload = g_WorkState->GetPauseDownload();
+			m_downloadLimit = g_WorkState->GetSpeedLimit();
 			m_threadCount = Thread::GetThreadCount();
 			g_StatMeter->CalcTotalStat(&m_upTimeSec, &m_dnTimeSec, &m_allBytes, &m_standBy);
 
@@ -108,8 +124,8 @@ void Frontend::ServerPauseUnpause(bool pause)
 	}
 	else
 	{
-		g_Options->SetResumeTime(0);
-		g_Options->SetPauseDownload(pause);
+		g_WorkState->SetResumeTime(0);
+		g_WorkState->SetPauseDownload(pause);
 	}
 }
 
@@ -121,7 +137,7 @@ void Frontend::ServerSetDownloadRate(int rate)
 	}
 	else
 	{
-		g_Options->SetDownloadRate(rate);
+		g_WorkState->SetSpeedLimit(rate);
 	}
 }
 
@@ -306,4 +322,17 @@ bool Frontend::RequestEditQueue(DownloadQueue::EEditAction action, int offset, i
 	client.SetVerbose(false);
 	IdList ids = { id };
 	return client.RequestServerEditQueue(action, offset, nullptr, &ids, nullptr, rmId);
+}
+
+void Frontend::Wait(int milliseconds)
+{
+	if (g_WorkState->GetPauseFrontend())
+	{
+		Guard guard(m_waitMutex);
+		m_waitCond.WaitFor(m_waitMutex, 2000);
+	}
+	else
+	{
+		Util::Sleep(milliseconds);
+	}
 }

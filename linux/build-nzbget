@@ -2,7 +2,7 @@
 #
 #  This file is part of nzbget
 #
-#  Copyright (C) 2015-2018 Andrey Prygunkov <hugbug@users.sourceforge.net>
+#  Copyright (C) 2015-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
 #
 #  This program is free software; you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@ set -o errexit
 # Uncomment next line for debuging
 #set -x
 
-ALLTARGETS="dist i686 x86_64 armel armhf mipsel mipseb ppc6xx ppc500 x86_64-bsd i686-ndk armhf-ndk"
+ALLTARGETS="dist i686 x86_64 armel armhf aarch64 mipsel mipseb ppc6xx ppc500 x86_64-bsd i686-ndk armhf-ndk aarch64-ndk"
 ROOT=`pwd`
 ROOTPATH=$PATH
 OUTPUTDIR=$ROOT/output
@@ -304,13 +304,13 @@ ConfigureTarget()
         buildroot-debug|buildroot-debug-strip)
             LDFLAGS="-static $STRIP" \
                 CXXFLAGS="-std=c++14 -g -fasynchronous-unwind-tables" \
-                LIBS="-lcrypto -ldl -lz $LUBACKTRACE" \
+                LIBS="-lcrypto -ldl -lz -Wl,--whole-archive -lpthread -Wl,--no-whole-archive $LUBACKTRACE" \
                 ./configure --disable-dependency-tracking --host=$ARCH --enable-debug
             ;;
         buildroot-release|buildroot-release-nostrip)
             LDFLAGS="-static $STRIP" \
                 CXXFLAGS="-std=c++14 -O2 $DEBUG" \
-                LIBS="-lcrypto -ldl -lz" \
+                LIBS="-lcrypto -ldl -lz -Wl,--whole-archive -lpthread -Wl,--no-whole-archive" \
                 ./configure --disable-dependency-tracking --host=$ARCH
             ;;
         ndk-debug|ndk-debug-strip)

@@ -1,7 +1,7 @@
 /*
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
- *  Copyright (C) 2014-2017 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2014-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -113,7 +113,7 @@ bool ArticleWriter::Start(Decoder::EFormat format, const char* filename, int64 f
 
 		while (!m_articleData.GetData() && g_ArticleCache->GetFlushing())
 		{
-			usleep(5 * 1000);
+			Util::Sleep(5);
 			m_articleData = g_ArticleCache->Alloc(m_articleSize);
 		}
 
@@ -126,11 +126,11 @@ bool ArticleWriter::Start(Decoder::EFormat format, const char* filename, int64 f
 	if (!m_articleData.GetData())
 	{
 		bool directWrite = (g_Options->GetDirectWrite() || m_fileInfo->GetForceDirectWrite()) && m_format == Decoder::efYenc;
-		const char* filename = directWrite ? m_outputFilename : m_tempFilename;
-		if (!m_outFile.Open(filename, directWrite ? DiskFile::omReadWrite : DiskFile::omWrite))
+		const char* outFilename = directWrite ? m_outputFilename : m_tempFilename;
+		if (!m_outFile.Open(outFilename, directWrite ? DiskFile::omReadWrite : DiskFile::omWrite))
 		{
 			m_fileInfo->GetNzbInfo()->PrintMessage(Message::mkError,
-				"Could not %s file %s: %s", directWrite ? "open" : "create", filename,
+				"Could not %s file %s: %s", directWrite ? "open" : "create", outFilename,
 				*FileSystem::GetLastErrorMessage());
 			return false;
 		}
@@ -775,6 +775,11 @@ CachedSegmentData ArticleCache::Alloc(int size)
 			{
 				g_DiskState->WriteCacheFlag();
 			}
+			if (!m_allocated)
+			{
+				// Resume Run(), the notification arrives later, after releasing m_allocMutex
+				m_allocCond.NotifyAll();
+			}
 			m_allocated += size;
 		}
 	}
@@ -821,19 +826,34 @@ void ArticleCache::Run()
 	bool justFlushed = false;
 	while (!IsStopped() || m_allocated > 0)
 	{
-		if ((justFlushed || resetCounter >= 1000  || IsStopped() ||
+		if ((justFlushed || resetCounter >= 1000 || IsStopped() ||
 			 (g_Options->GetDirectWrite() && m_allocated >= fillThreshold)) &&
 			m_allocated > 0)
 		{
 			justFlushed = CheckFlush(m_allocated >= fillThreshold);
 			resetCounter = 0;
 		}
+		else if (!m_allocated)
+		{
+			Guard guard(m_allocMutex);
+			m_allocCond.Wait(m_allocMutex, [&]{ return IsStopped() || m_allocated > 0; });
+			resetCounter = 0;
+		}
 		else
 		{
-			usleep(5 * 1000);
+			Util::Sleep(5);
 			resetCounter += 5;
 		}
 	}
+}
+
+void ArticleCache::Stop()
+{
+	Thread::Stop();
+
+	// Resume Run() to exit it
+	Guard guard(m_allocMutex);
+	m_allocCond.NotifyAll();
 }
 
 bool ArticleCache::CheckFlush(bool flushEverything)

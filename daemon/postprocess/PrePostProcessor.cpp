@@ -1,7 +1,7 @@
 /*
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
- *  Copyright (C) 2007-2018 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2007-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
 #include "nzbget.h"
 #include "PrePostProcessor.h"
 #include "Options.h"
+#include "WorkState.h"
 #include "Log.h"
 #include "HistoryCoordinator.h"
 #include "DupeCoordinator.h"
@@ -49,7 +50,7 @@ void PrePostProcessor::Run()
 
 	while (!DownloadQueue::IsLoaded())
 	{
-		usleep(20 * 1000);
+		Util::Sleep(20);
 	}
 
 	if (g_Options->GetServerMode())
@@ -59,13 +60,25 @@ void PrePostProcessor::Run()
 
 	while (!IsStopped())
 	{
-		if (!g_Options->GetTempPausePostprocess() && m_queuedJobs)
+		if (g_WorkState->GetTempPausePostprocess())
+		{
+			// Postprocess is paused: just wait and loop
+			Util::Sleep(200);
+			continue;
+		}
+
+		if (m_queuedJobs)
 		{
 			// check post-queue every 200 msec
 			CheckPostQueue();
+			Util::Sleep(200);
 		}
-
-		usleep(200 * 1000);
+		else
+		{
+			// Wait until we get the stop signal or more jobs in the queue
+			Guard guard(m_waitMutex);
+			m_waitCond.Wait(m_waitMutex, [&]{ return m_queuedJobs || IsStopped(); });
+		}
 	}
 
 	WaitJobs();
@@ -89,7 +102,7 @@ void PrePostProcessor::WaitJobs()
 			}
 		}
 		CheckPostQueue();
-		usleep(200 * 1000);
+		Util::Sleep(200);
 	}
 
 	// kill remaining post-processing jobs; not safe but we can't wait any longer
@@ -124,7 +137,7 @@ void PrePostProcessor::WaitJobs()
 				break;
 			}
 		}
-		usleep(200 * 1000);
+		Util::Sleep(200);
 	}
 
 	// disconnect remaining direct unpack jobs
@@ -142,23 +155,30 @@ void PrePostProcessor::WaitJobs()
 void PrePostProcessor::Stop()
 {
 	Thread::Stop();
-	GuardedDownloadQueue downloadQueue = DownloadQueue::Guard();
 
-	for (NzbInfo* postJob : m_activeJobs)
 	{
-		if (postJob->GetPostInfo() && postJob->GetPostInfo()->GetPostThread())
+		GuardedDownloadQueue downloadQueue = DownloadQueue::Guard();
+
+		for (NzbInfo* postJob : m_activeJobs)
 		{
-			postJob->GetPostInfo()->GetPostThread()->Stop();
+			if (postJob->GetPostInfo() && postJob->GetPostInfo()->GetPostThread())
+			{
+				postJob->GetPostInfo()->GetPostThread()->Stop();
+			}
+		}
+
+		for (NzbInfo* nzbInfo : downloadQueue->GetQueue())
+		{
+			if (nzbInfo->GetUnpackThread())
+			{
+				((DirectUnpack*)nzbInfo->GetUnpackThread())->Stop(downloadQueue, nzbInfo);
+			}
 		}
 	}
 
-	for (NzbInfo* nzbInfo : downloadQueue->GetQueue())
-	{
-		if (nzbInfo->GetUnpackThread())
-		{
-			((DirectUnpack*)nzbInfo->GetUnpackThread())->Stop(downloadQueue, nzbInfo);
-		}
-	}
+	// Resume Run() to exit it
+	Guard guard(m_waitMutex);
+	m_waitCond.NotifyAll();
 }
 
 /**
@@ -324,7 +344,6 @@ void PrePostProcessor::NzbDownloaded(DownloadQueue* downloadQueue, NzbInfo* nzbI
 		nzbInfo->PrintMessage(Message::mkInfo, "Queueing %s for post-processing", nzbInfo->GetName());
 
 		nzbInfo->EnterPostProcess();
-		m_queuedJobs++;
 
 		if (nzbInfo->GetParStatus() == NzbInfo::psNone &&
 			g_Options->GetParCheck() != Options::pcAlways &&
@@ -340,7 +359,13 @@ void PrePostProcessor::NzbDownloaded(DownloadQueue* downloadQueue, NzbInfo* nzbI
 			((DirectUnpack*)nzbInfo->GetUnpackThread())->NzbDownloaded(downloadQueue, nzbInfo);
 		}
 
-		downloadQueue->Save();
+		nzbInfo->SetChanged(true);
+		downloadQueue->SaveChanged();
+
+		// We have more jobs in the queue, notify Run()
+		Guard guard(m_waitMutex);
+		m_queuedJobs++;
+		m_waitCond.NotifyAll();
 	}
 	else
 	{
@@ -586,7 +611,7 @@ NzbInfo* PrePostProcessor::PickNextJob(DownloadQueue* downloadQueue, bool allowP
 			!g_QueueScriptCoordinator->HasJob(nzbInfo1->GetId(), nullptr) &&
 			nzbInfo1->GetDirectUnpackStatus() != NzbInfo::nsRunning &&
 			(!nzbInfo || nzbInfo1->GetPriority() > nzbInfo->GetPriority()) &&
-			(!g_Options->GetPausePostProcess() || nzbInfo1->GetForcePriority()) &&
+			(!g_WorkState->GetPausePostProcess() || nzbInfo1->GetForcePriority()) &&
 			(allowPar || !nzbInfo1->GetPostInfo()->GetNeedParCheck()) &&
 			(std::find(m_activeJobs.begin(), m_activeJobs.end(), nzbInfo1) == m_activeJobs.end()) &&
 			nzbInfo1->IsDownloadCompleted(true))
@@ -620,7 +645,7 @@ void PrePostProcessor::CheckPostQueue()
 
 		PostInfo* postInfo = postJob->GetPostInfo();
 		if (postInfo->GetStage() == PostInfo::ptQueued &&
-			(!g_Options->GetPausePostProcess() || postInfo->GetNzbInfo()->GetForcePriority()))
+			(!g_WorkState->GetPausePostProcess() || postInfo->GetNzbInfo()->GetForcePriority()))
 		{
 			StartJob(downloadQueue, postInfo, allowPar);
 			CheckRequestPar(downloadQueue);
@@ -832,6 +857,7 @@ void PrePostProcessor::JobCompleted(DownloadQueue* downloadQueue, PostInfo* post
 		NzbCompleted(downloadQueue, nzbInfo, false);
 	}
 
+	Guard guard(m_waitMutex);
 	m_queuedJobs--;
 }
 
@@ -867,16 +893,16 @@ void PrePostProcessor::UpdatePauseState()
 		}
 	}
 
-	if (needPause && !g_Options->GetTempPauseDownload())
+	if (needPause && !g_WorkState->GetTempPauseDownload())
 	{
 		info("Pausing download before post-processing");
 	}
-	else if (!needPause && g_Options->GetTempPauseDownload())
+	else if (!needPause && g_WorkState->GetTempPauseDownload())
 	{
 		info("Unpausing download after post-processing");
 	}
 
-	g_Options->SetTempPauseDownload(needPause);
+	g_WorkState->SetTempPauseDownload(needPause);
 }
 
 bool PrePostProcessor::EditList(DownloadQueue* downloadQueue, IdList* idList,

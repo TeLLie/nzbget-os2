@@ -2,7 +2,7 @@
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
  *  Copyright (C) 2004 Sven Henkel <sidddy@users.sourceforge.net>
- *  Copyright (C) 2007-2018 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2007-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -140,6 +140,8 @@ public:
 	void SetSubject(const char* subject) { m_subject = subject; }
 	const char* GetFilename() { return m_filename; }
 	void SetFilename(const char* filename) { m_filename = filename; }
+	void SetOrigname(const char* origname) { m_origname = origname; }
+	const char* GetOrigname() { return m_origname; }
 	void MakeValidFilename();
 	bool GetFilenameConfirmed() { return m_filenameConfirmed; }
 	void SetFilenameConfirmed(bool filenameConfirmed) { m_filenameConfirmed = filenameConfirmed; }
@@ -209,6 +211,7 @@ private:
 	ServerStatList m_serverStats;
 	CString m_subject;
 	CString m_filename;
+	CString m_origname;
 	int64 m_size = 0;
 	int64 m_remainingSize = 0;
 	int64 m_successSize = 0;
@@ -259,11 +262,13 @@ public:
 		cfFailure
 	};
 
-	CompletedFile(int id, const char* filename, EStatus status, uint32 crc, 
-		bool parFile, const char* hash16k, const char* parSetId);
+	CompletedFile(int id, const char* filename, const char* oldname, EStatus status,
+		uint32 crc, bool parFile, const char* hash16k, const char* parSetId);
 	int GetId() { return m_id; }
 	void SetFilename(const char* filename) { m_filename = filename; }
 	const char* GetFilename() { return m_filename; }
+	void SetOrigname(const char* origname) { m_origname = origname; }
+	const char* GetOrigname() { return m_origname; }
 	bool GetParFile() { return m_parFile; }
 	EStatus GetStatus() { return m_status; }
 	uint32 GetCrc() { return m_crc; }
@@ -275,6 +280,7 @@ public:
 private:
 	int m_id;
 	CString m_filename;
+	CString m_origname;
 	EStatus m_status;
 	uint32 m_crc;
 	bool m_parFile;
@@ -926,13 +932,15 @@ public:
 		eaNzbAdded,
 		eaNzbDeleted,
 		eaNzbNamed,
+		eaNzbReturned,
 		eaFileCompleted,
 		eaFileDeleted,
 		eaUrlFound,
 		eaUrlAdded,
 		eaUrlDeleted,
 		eaUrlCompleted,
-		eaUrlFailed
+		eaUrlFailed,
+		eaUrlReturned
 	};
 
 	struct Aspect
@@ -1013,6 +1021,7 @@ public:
 	virtual bool EditList(IdList* idList, NameList* nameList, EMatchMode matchMode, EEditAction action, const char* args) = 0;
 	virtual void HistoryChanged() = 0;
 	virtual void Save() = 0;
+	virtual void SaveChanged() = 0;
 	void CalcRemainingSize(int64* remaining, int64* remainingForced);
 
 protected:

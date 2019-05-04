@@ -1,7 +1,7 @@
 /*
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
- *  Copyright (C) 2007-2017 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2007-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -115,7 +115,7 @@ compiled */
 
 // WINDOWS INCLUDES
 
-// Using "WIN32_LEAN_AND_MEAN" to disable including on many unneeded headers
+// Using "WIN32_LEAN_AND_MEAN" to disable including of many unneeded headers
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 
@@ -209,6 +209,7 @@ using namespace MSXML;
 #include <stdarg.h>
 #include <time.h>
 #include <ctype.h>
+#include <inttypes.h>
 
 #include <string>
 #include <vector>
@@ -222,6 +223,10 @@ using namespace MSXML;
 #include <fstream>
 #include <memory>
 #include <functional>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <chrono>
 
 // NOTE: do not include <iostream> in "nzbget.h". <iostream> contains objects requiring
 // intialization, causing every unit in nzbget to have initialization routine. This in particular
@@ -273,19 +278,6 @@ typedef int pid_t;
 #ifdef HAVE_MEMORY_H
 # include <memory.h>
 #endif
-#ifdef HAVE_INTTYPES_H
-# include <inttypes.h>
-#else
-#ifndef PRId64
-#define PRId64 "lld"
-#endif
-#ifndef PRIi64
-#define PRIi64 "lli"
-#endif
-#ifndef PRIu64
-#define PRIu64 "llu"
-#endif
-#endif
 #endif /* NOT DISABLE_PARCHECK */
 
 
@@ -312,7 +304,6 @@ typedef int pid_t;
 #define S_ISDIR(mode) __S_ISTYPE((mode), _S_IFDIR)
 #define S_ISREG(mode) __S_ISTYPE((mode), _S_IFREG)
 #define S_DIRMODE nullptr
-#define usleep(usec) Sleep((usec) / 1000)
 #define socklen_t int
 #define SHUT_WR 0x01
 #define SHUT_RDWR 0x02
@@ -391,6 +382,16 @@ typedef signed int int32;
 typedef unsigned int uint32;
 typedef signed long long int64;
 typedef unsigned long long uint64;
+#endif
+
+#ifndef PRId64
+#define PRId64 "lld"
+#endif
+#ifndef PRIi64
+#define PRIi64 "lli"
+#endif
+#ifndef PRIu64
+#define PRIu64 "llu"
 #endif
 
 typedef unsigned char uchar;

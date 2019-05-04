@@ -2,7 +2,7 @@
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
  *  Copyright (C) 2004 Sven Henkel <sidddy@users.sourceforge.net>
- *  Copyright (C) 2007-2016 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2007-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -25,18 +25,15 @@
 class Mutex
 {
 public:
-	Mutex();
+	Mutex() {};
 	Mutex(const Mutex&) = delete;
-	~Mutex();
-	void Lock();
-	void Unlock();
+	void Lock() { m_mutexObj.lock(); }
+	void Unlock() { m_mutexObj.unlock(); }
 
 private:
-#ifdef WIN32
-	CRITICAL_SECTION m_mutexObj;
-#else
-	pthread_mutex_t m_mutexObj;
-#endif
+	std::mutex m_mutexObj;
+
+	friend class ConditionVar;
 };
 
 class Guard
@@ -80,6 +77,29 @@ private:
 	void Unlock() { if (m_mutex) { m_mutex->Unlock(); m_mutex = nullptr; } }
 };
 
+class ConditionVar
+{
+public:
+	ConditionVar() {}
+	ConditionVar(const ConditionVar& other) = delete;
+	void Wait(Mutex& mutex) { Lock l(mutex); m_condObj.wait(l); }
+	template <typename Pred> void Wait(Mutex& mutex, Pred pred) { Lock l(mutex); m_condObj.wait(l, pred); }
+	void WaitFor(Mutex& mutex, int msec) { Lock l(mutex); m_condObj.wait_for(l, std::chrono::milliseconds(msec)); }
+	template <typename Pred> void WaitFor(Mutex& mutex, int msec, Pred pred)
+		{ Lock l(mutex); m_condObj.wait_for(l, std::chrono::milliseconds(msec), pred); }
+	void NotifyOne() { m_condObj.notify_one(); }
+	void NotifyAll() { m_condObj.notify_all(); }
+
+private:
+	std::condition_variable m_condObj;
+
+	struct Lock : public std::unique_lock<std::mutex>
+	{
+		Lock(Mutex& mutex) : std::unique_lock<std::mutex>(mutex.m_mutexObj, std::adopt_lock) {}
+		~Lock() { release(); }
+	};
+};
+
 class Thread
 {
 public:
@@ -105,20 +125,12 @@ protected:
 private:
 	static std::unique_ptr<Mutex> m_threadMutex;
 	static int m_threadCount;
-#ifdef WIN32
-	HANDLE m_threadObj = 0;
-#else
-	pthread_t m_threadObj = 0;
-#endif
+	std::thread::native_handle_type m_threadObj = 0;
 	bool m_running = false;
 	bool m_stopped = false;
 	bool m_autoDestroy = false;
 
-#ifdef WIN32
-	static void __cdecl thread_handler(void* object);
-#else
-	static void *thread_handler(void* object);
-#endif
+	void thread_handler();
 };
 
 #endif

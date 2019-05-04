@@ -1,7 +1,7 @@
 /*
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
- *  Copyright (C) 2013-2016 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2013-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
 #include "nzbget.h"
 #include "FeedCoordinator.h"
 #include "Options.h"
+#include "WorkState.h"
 #include "WebDownloader.h"
 #include "Util.h"
 #include "FileSystem.h"
@@ -66,6 +67,9 @@ FeedCoordinator::FeedCoordinator()
 
 	m_downloadQueueObserver.m_owner = this;
 	DownloadQueue::Guard()->Attach(&m_downloadQueueObserver);
+
+	m_workStateObserver.m_owner = this;
+	g_WorkState->Attach(&m_workStateObserver);
 }
 
 FeedCoordinator::~FeedCoordinator()
@@ -85,7 +89,7 @@ void FeedCoordinator::Run()
 
 	while (!DownloadQueue::IsLoaded())
 	{
-		usleep(20 * 1000);
+		Util::Sleep(20);
 	}
 
 	if (g_Options->GetServerMode())
@@ -94,60 +98,68 @@ void FeedCoordinator::Run()
 		g_DiskState->LoadFeeds(&m_feeds, &m_feedHistory);
 	}
 
-	int sleepInterval = 100;
-	int updateCounter = 0;
-	int cleanupCounter = 60000;
-
+	time_t lastCleanup = 0;
 	while (!IsStopped())
 	{
-		usleep(sleepInterval * 1000);
-
-		updateCounter += sleepInterval;
-		if (updateCounter >= 1000)
+		// this code should not be called too often, once per second is OK
+		if (!g_WorkState->GetPauseDownload() || m_force || g_Options->GetUrlForce())
 		{
-			// this code should not be called too often, once per second is OK
+			Guard guard(m_downloadsMutex);
 
-			if (!g_Options->GetPauseDownload() || m_force || g_Options->GetUrlForce())
+			time_t current = Util::CurrentTime();
+			if ((int)m_activeDownloads.size() < g_Options->GetUrlConnections())
 			{
-				Guard guard(m_downloadsMutex);
-
-				time_t current = Util::CurrentTime();
-				if ((int)m_activeDownloads.size() < g_Options->GetUrlConnections())
+				m_force = false;
+				// check feed list and update feeds
+				for (FeedInfo* feedInfo : &m_feeds)
 				{
-					m_force = false;
-					// check feed list and update feeds
-					for (FeedInfo* feedInfo : &m_feeds)
+					if (((feedInfo->GetInterval() > 0 &&
+						 (feedInfo->GetNextUpdate() == 0 ||
+						  current >= feedInfo->GetNextUpdate() ||
+						  current < feedInfo->GetNextUpdate() - feedInfo->GetInterval() * 60)) ||
+						feedInfo->GetFetch()) &&
+						feedInfo->GetStatus() != FeedInfo::fsRunning)
 					{
-						if (((feedInfo->GetInterval() > 0 &&
-							 (feedInfo->GetNextUpdate() == 0 ||
-							  current >= feedInfo->GetNextUpdate() ||
-							  current < feedInfo->GetNextUpdate() - feedInfo->GetInterval() * 60)) ||
-							feedInfo->GetFetch()) &&
-							feedInfo->GetStatus() != FeedInfo::fsRunning)
-						{
-							StartFeedDownload(feedInfo, feedInfo->GetFetch());
-						}
-						else if (feedInfo->GetFetch())
-						{
-							m_force = true;
-						}
+						StartFeedDownload(feedInfo, feedInfo->GetFetch());
+					}
+					else if (feedInfo->GetFetch())
+					{
+						m_force = true;
 					}
 				}
 			}
-
-			CheckSaveFeeds();
-			ResetHangingDownloads();
-			updateCounter = 0;
 		}
 
-		cleanupCounter += sleepInterval;
-		if (cleanupCounter >= 60000)
+		CheckSaveFeeds();
+		ResetHangingDownloads();
+
+		if (std::abs(Util::CurrentTime() - lastCleanup) >= 60)
 		{
 			// clean up feed history once a minute
 			CleanupHistory();
 			CleanupCache();
 			CheckSaveFeeds();
-			cleanupCounter = 0;
+			lastCleanup = Util::CurrentTime();
+		}
+
+		Guard guard(m_downloadsMutex);
+		if (m_force)
+		{
+			// don't sleep too long if there active feeds scheduled for redownload
+			m_waitCond.WaitFor(m_downloadsMutex, 1000, [&]{ return IsStopped(); });
+		}
+		else
+		{
+			// no active jobs, we can sleep longer:
+			//  - if option "UrlForce" is active or if the feed list is empty we need to wake up
+			//    only when a new feed preview is requested. We could wait indefinitely for that
+			//    but we need to do some job every now and then and therefore we sleep only 60 seconds.
+			//  - if option "UrlForce" is disabled we need also to wake up when state "DownloadPaused"
+			//    is changed. We detect this via notification from 'WorkState'. However such
+			//    notifications are not 100% reliable due to possible race conditions. Therefore
+			//    we sleep for max. 5 seconds.
+			int waitInterval = g_Options->GetUrlForce() || m_feeds.empty() ? 60000 : 5000;
+			m_waitCond.WaitFor(m_downloadsMutex, waitInterval, [&]{ return m_force || IsStopped(); });
 		}
 	}
 
@@ -161,7 +173,7 @@ void FeedCoordinator::Run()
 			completed = m_activeDownloads.size() == 0;
 		}
 		CheckSaveFeeds();
-		usleep(100 * 1000);
+		Util::Sleep(100);
 		ResetHangingDownloads();
 	}
 	debug("FeedCoordinator: Downloads are completed");
@@ -180,6 +192,15 @@ void FeedCoordinator::Stop()
 		feedDownloader->Stop();
 	}
 	debug("UrlDownloads are notified");
+
+	// Resume Run() to exit it
+	m_waitCond.NotifyAll();
+}
+
+void FeedCoordinator::WorkStateUpdate(Subject* caller, void* aspect)
+{
+	m_force = true;
+	m_waitCond.NotifyAll();
 }
 
 void FeedCoordinator::ResetHangingDownloads()
@@ -522,12 +543,15 @@ std::shared_ptr<FeedItemList> FeedCoordinator::PreviewFeed(int id,
 			}
 
 			StartFeedDownload(feedInfo.get(), true);
+
+			m_force = true;
+			m_waitCond.NotifyAll();
 		}
 
 		// wait until the download in a separate thread completes
 		while (feedInfo->GetStatus() == FeedInfo::fsRunning)
 		{
-			usleep(100 * 1000);
+			Util::Sleep(100);
 		}
 
 		// now can process the feed
@@ -586,6 +610,8 @@ void FeedCoordinator::FetchFeed(int id)
 			m_force = true;
 		}
 	}
+
+	m_waitCond.NotifyAll();
 }
 
 std::unique_ptr<FeedFile> FeedCoordinator::parseFeed(FeedInfo* feedInfo)

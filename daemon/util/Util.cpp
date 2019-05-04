@@ -122,7 +122,7 @@ void Util::Init()
 	}
 
 	// init static vars there
-	GetCurrentTicks();
+	CurrentTicks();
 }
 
 int64 Util::JoinInt64(uint32 Hi, uint32 Lo)
@@ -493,7 +493,7 @@ b -= c; b -= a; b ^= (a<<10); \
 c -= a; c -= b; c ^= (b>>15); \
 }
 
-uint32 hash(register uint8 *k, register uint32  length, register uint32  initval)
+uint32 hash(uint8 *k, uint32 length, uint32 initval)
 // register uint8 *k;        /* the key */
 // register uint32  length;   /* the length of the key */
 // register uint32  initval;    /* the previous hash, or an arbitrary value */
@@ -663,7 +663,7 @@ int Util::NumberOfCpuCores()
 	return -1;
 }
 
-int64 Util::GetCurrentTicks()
+int64 Util::CurrentTicks()
 {
 #ifdef WIN32
 	static int64 hz=0, hzo=0;
@@ -679,6 +679,15 @@ int64 Util::GetCurrentTicks()
 	timeval t;
 	gettimeofday(&t, nullptr);
 	return (int64)(t.tv_sec) * 1000000ll + (int64)(t.tv_usec);
+#endif
+}
+
+void Util::Sleep(int milliseconds)
+{
+#ifdef WIN32
+	::Sleep(milliseconds);
+#else
+	usleep(milliseconds * 1000);
 #endif
 }
 

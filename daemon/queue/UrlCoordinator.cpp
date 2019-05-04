@@ -1,7 +1,7 @@
 /*
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
- *  Copyright (C) 2012-2016 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2012-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
 #include "nzbget.h"
 #include "UrlCoordinator.h"
 #include "Options.h"
+#include "WorkState.h"
 #include "WebDownloader.h"
 #include "Util.h"
 #include "FileSystem.h"
@@ -60,6 +61,12 @@ void UrlDownloader::ProcessHeader(const char* line)
 	}
 }
 
+UrlCoordinator::UrlCoordinator()
+{
+	m_downloadQueueObserver.m_owner = this;
+	DownloadQueue::Guard()->Attach(&m_downloadQueueObserver);
+}
+
 UrlCoordinator::~UrlCoordinator()
 {
 	debug("Destroying UrlCoordinator");
@@ -79,41 +86,45 @@ void UrlCoordinator::Run()
 
 	while (!DownloadQueue::IsLoaded())
 	{
-		usleep(20 * 1000);
+		Util::Sleep(20);
 	}
-
-	int resetCounter = 0;
 
 	while (!IsStopped())
 	{
+		time_t lastReset = 0;
 		bool downloadStarted = false;
-		if (!g_Options->GetPauseDownload() || g_Options->GetUrlForce())
+
 		{
-			// start download for next URL
+			NzbInfo* nzbInfo = nullptr;
 			GuardedDownloadQueue downloadQueue = DownloadQueue::Guard();
 			if ((int)m_activeDownloads.size() < g_Options->GetUrlConnections())
 			{
-				NzbInfo* nzbInfo = GetNextUrl(downloadQueue);
-				bool hasMoreUrls = nzbInfo != nullptr;
-				bool urlDownloadsRunning = !m_activeDownloads.empty();
-				m_hasMoreJobs = hasMoreUrls || urlDownloadsRunning;
-				if (hasMoreUrls && !IsStopped())
+				nzbInfo = GetNextUrl(downloadQueue);
+				if (nzbInfo && (!g_WorkState->GetPauseDownload() || g_Options->GetUrlForce()))
 				{
 					StartUrlDownload(nzbInfo);
 					downloadStarted = true;
 				}
 			}
+			m_hasMoreJobs = !m_activeDownloads.empty() || nzbInfo;
 		}
 
-		int sleepInterval = downloadStarted ? 0 : 100;
-		usleep(sleepInterval * 1000);
-
-		resetCounter += sleepInterval;
-		if (resetCounter >= 1000)
+		if (lastReset != Util::CurrentTime())
 		{
 			// this code should not be called too often, once per second is OK
 			ResetHangingDownloads();
-			resetCounter = 0;
+			lastReset = Util::CurrentTime();
+		}
+
+		if (!m_hasMoreJobs && !IsStopped())
+		{
+			Guard guard(m_waitMutex);
+			m_waitCond.Wait(m_waitMutex, [&] { return m_hasMoreJobs || IsStopped(); });
+		}
+		else
+		{
+			int sleepInterval = downloadStarted ? 0 : 100;
+			Util::Sleep(sleepInterval);
 		}
 	}
 
@@ -136,7 +147,7 @@ void UrlCoordinator::WaitJobs()
 				break;
 			}
 		}
-		usleep(100 * 1000);
+		Util::Sleep(100);
 		ResetHangingDownloads();
 	}
 
@@ -148,12 +159,33 @@ void UrlCoordinator::Stop()
 	Thread::Stop();
 
 	debug("Stopping UrlDownloads");
-	GuardedDownloadQueue guard = DownloadQueue::Guard();
-	for (UrlDownloader* urlDownloader : m_activeDownloads)
 	{
-		urlDownloader->Stop();
+		GuardedDownloadQueue guard = DownloadQueue::Guard();
+		for (UrlDownloader* urlDownloader : m_activeDownloads)
+		{
+			urlDownloader->Stop();
+		}
 	}
 	debug("UrlDownloads are notified");
+
+	// Resume Run() to exit it
+	Guard guard(m_waitMutex);
+	m_waitCond.NotifyAll();
+}
+
+void UrlCoordinator::DownloadQueueUpdate(Subject* caller, void* aspect)
+{
+	debug("Notification from download queue received");
+
+	DownloadQueue::Aspect* queueAspect = (DownloadQueue::Aspect*)aspect;
+	if (queueAspect->action == DownloadQueue::eaUrlAdded ||
+		queueAspect->action == DownloadQueue::eaUrlReturned)
+	{
+		// Resume Run()
+		Guard guard(m_waitMutex);
+		m_hasMoreJobs = true;
+		m_waitCond.NotifyAll();
+	}
 }
 
 void UrlCoordinator::ResetHangingDownloads()
@@ -194,8 +226,6 @@ void UrlCoordinator::LogDebugInfo()
  */
 NzbInfo* UrlCoordinator::GetNextUrl(DownloadQueue* downloadQueue)
 {
-	bool pauseDownload = g_Options->GetPauseDownload();
-
 	NzbInfo* nzbInfo = nullptr;
 
 	for (NzbInfo* nzbInfo1 : downloadQueue->GetQueue())
@@ -203,7 +233,6 @@ NzbInfo* UrlCoordinator::GetNextUrl(DownloadQueue* downloadQueue)
 		if (nzbInfo1->GetKind() == NzbInfo::nkUrl &&
 			nzbInfo1->GetUrlStatus() == NzbInfo::lsNone &&
 			nzbInfo1->GetDeleteStatus() == NzbInfo::dsNone &&
-			(!pauseDownload || g_Options->GetUrlForce()) &&
 			(!nzbInfo || nzbInfo1->GetPriority() > nzbInfo->GetPriority()))
 		{
 			nzbInfo = nzbInfo1;
@@ -397,3 +426,4 @@ void UrlCoordinator::AddUrlToQueue(std::unique_ptr<NzbInfo> nzbInfo, bool addFir
 
 	downloadQueue->Save();
 }
+

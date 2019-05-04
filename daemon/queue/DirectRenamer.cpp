@@ -1,7 +1,7 @@
 /*
  *  This file is part of nzbget. See <http://nzbget.net>.
  *
- *  Copyright (C) 2017 Andrey Prygunkov <hugbug@users.sourceforge.net>
+ *  Copyright (C) 2017-2019 Andrey Prygunkov <hugbug@users.sourceforge.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -208,7 +208,8 @@ void DirectRenamer::ArticleDownloaded(DownloadQueue* downloadQueue, FileInfo* fi
 			fileInfo->SetPaused(false);
 		}
 
-		downloadQueue->Save();
+		nzbInfo->SetChanged(true);
+		downloadQueue->SaveChanged();
 	}
 
 	if (fileInfo->GetParFile())
@@ -258,7 +259,8 @@ void DirectRenamer::CheckState(DownloadQueue* downloadQueue, NzbInfo* nzbInfo)
 		// all first articles downloaded
 		UnpausePars(nzbInfo);
 		nzbInfo->SetWaitingPar(true);
-		downloadQueue->Save();
+		nzbInfo->SetChanged(true);
+		downloadQueue->SaveChanged();
 	}
 
 	if (nzbInfo->GetWaitingPar() && !nzbInfo->GetLoadingPar())
@@ -376,12 +378,20 @@ void DirectRenamer::RenameFiles(DownloadQueue* downloadQueue, NzbInfo* nzbInfo, 
 			{
 				nzbInfo->PrintMessage(Message::mkInfo, "Renaming in-progress file %s to %s",
 					fileInfo->GetFilename(), *newName);
+				if (Util::EmptyStr(fileInfo->GetOrigname()))
+				{
+					fileInfo->SetOrigname(fileInfo->GetFilename());
+				}
 				fileInfo->SetFilename(newName);
 				fileInfo->SetFilenameConfirmed(true);
 				renamedCount++;
 			}
 			else if (RenameCompletedFile(nzbInfo, fileInfo->GetFilename(), newName))
 			{
+				if (Util::EmptyStr(fileInfo->GetOrigname()))
+				{
+					fileInfo->SetOrigname(fileInfo->GetFilename());
+				}
 				fileInfo->SetFilename(newName);
 				fileInfo->SetFilenameConfirmed(true);
 				renamedCount++;
@@ -404,6 +414,10 @@ void DirectRenamer::RenameFiles(DownloadQueue* downloadQueue, NzbInfo* nzbInfo, 
 
 		if (newName && RenameCompletedFile(nzbInfo, completedFile.GetFilename(), newName))
 		{
+			if (Util::EmptyStr(completedFile.GetOrigname()))
+			{
+				completedFile.SetOrigname(completedFile.GetFilename());
+			}
 			completedFile.SetFilename(newName);
 			renamedCount++;
 		}
