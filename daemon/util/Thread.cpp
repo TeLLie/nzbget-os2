@@ -52,20 +52,6 @@ void Thread::Start()
 	// NOTE: "m_threadMutex" ensures that "t" lives until the very end of the function
 	Guard guard(m_threadMutex);
 
-<<<<<<< HEAD
-#ifdef WIN32
-	m_threadObj = (HANDLE)_beginthread(Thread::thread_handler, 0, (void*)this);
-	m_running = m_threadObj != 0;
-#else
-	pthread_attr_t m_attr;
-	pthread_attr_init(&m_attr);
-	pthread_attr_setdetachstate(&m_attr, PTHREAD_CREATE_DETACHED);
-//	pthread_attr_setinheritsched(&m_attr, PTHREAD_INHERIT_SCHED);
-  pthread_attr_setstacksize(&m_attr, PTHREAD_INHERIT_SCHED); //OS2 fix
-	m_running = !pthread_create(&m_threadObj, &m_attr, Thread::thread_handler, (void *) this);
-	pthread_attr_destroy(&m_attr);
-#endif
-=======
 	// start the new thread
 	std::thread t([&]{
 		{
@@ -80,7 +66,6 @@ void Thread::Start()
 	// save the native handle to be able to cancel (Kill) the thread and then detach
 	m_threadObj = t.native_handle();
 	t.detach();
->>>>>>> bbfcf0768949f2e1c2065d9e6b1d2d870c557b59
 }
 
 void Thread::Stop()
